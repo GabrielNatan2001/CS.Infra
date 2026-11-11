@@ -9,6 +9,58 @@ Orquestração da plataforma (Docker Compose + Kubernetes + Kong + Prometheus/Gr
 - https://github.com/GabrielNatan2001/CS.Donations
 - https://github.com/GabrielNatan2001/CS.Infra
 
+## Diagrama de arquitetura
+
+```mermaid
+flowchart LR
+  Client[Postman_Swagger] --> Kong[Kong_Gateway]
+  Kong -->|/identity| Identity[CS.Identity_API]
+  Kong -->|/campaigns| Campaigns[CS.Campaigns_API]
+  Identity --> PgId[(PostgreSQL_cs_identity)]
+  Campaigns --> PgCamp[(PostgreSQL_cs_campaigns)]
+  Campaigns -->|DoacaoRecebidaEvent| RMQ[(RabbitMQ)]
+  RMQ --> Worker[CS.Donations_Worker]
+  Worker --> PgCamp
+  Identity --> Metrics["/metrics_/health"]
+  Campaigns --> Metrics
+  Metrics --> Prom[Prometheus]
+  Prom --> Grafana[Grafana]
+  Zabbix[Zabbix] --> Hosts[CPU_Memoria]
+```
+
+| Serviço | Responsabilidade |
+|---|---|
+| CS.Identity | Cadastro de doador, login JWT, RBAC |
+| CS.Campaigns | Campanhas, painel público, intenção de doação |
+| CS.Donations | Worker que atualiza `ValorTotalArrecadado` |
+| CS.Infra | Compose, K8s, Kong, observabilidade |
+
+## Fluxo de doação (assíncrono)
+
+```mermaid
+sequenceDiagram
+  participant Doador
+  participant Kong
+  participant Campaigns as CS.Campaigns_API
+  participant RMQ as RabbitMQ
+  participant Worker as CS.Donations_Worker
+  participant DB as PostgreSQL_cs_campaigns
+
+  Doador->>Kong: POST /campaigns/api/doacoes JWT
+  Kong->>Campaigns: encaminha request
+  Campaigns->>DB: cria doacao Pendente
+  Campaigns->>RMQ: publica DoacaoRecebidaEvent
+  Campaigns-->>Doador: 202 Accepted doacaoId
+  Note over Campaigns: API NAO atualiza ValorTotalArrecadado
+  RMQ->>Worker: consome fila
+  Worker->>DB: incrementa ValorTotalArrecadado
+  Worker->>DB: marca doacao Processada
+  Doador->>Kong: GET /campaigns/api/campanhas/ativas
+  Kong->>Campaigns: painel publico
+  Campaigns->>DB: le campanhas Ativa
+  Campaigns-->>Doador: titulo meta valorTotalArrecadado
+```
+
 ## Pré-requisitos
 
 - Docker Desktop (Compose v2+)
