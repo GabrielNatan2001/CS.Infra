@@ -1,0 +1,58 @@
+_format_version: "3.0"
+
+consumers:
+  - username: cs-client
+    jwt_secrets:
+      - key: CS.Identity.API
+        algorithm: HS256
+        secret: "CS#Solidaria@JwtKey2026!Hackaton11Nett"
+
+services:
+  - name: identity-api
+    url: http://identity-api:8080
+    routes:
+      - name: identity-route
+        paths:
+          - /identity
+        strip_path: true
+
+  - name: campaigns-api
+    url: http://campaigns-api:8080
+    routes:
+      - name: campaigns-health
+        paths:
+          - /campaigns/health
+        strip_path: false
+        plugins:
+          - name: request-transformer
+            config:
+              replace:
+                uri: /health
+      - name: campaigns-metrics
+        paths:
+          - /campaigns/metrics
+        strip_path: false
+        plugins:
+          - name: request-transformer
+            config:
+              replace:
+                uri: /metrics
+      - name: campaigns-ativas
+        paths:
+          - /campaigns/api/campanhas/ativas
+        strip_path: false
+        plugins:
+          - name: request-transformer
+            config:
+              replace:
+                uri: /api/campanhas/ativas
+      - name: campaigns-route
+        paths:
+          - /campaigns
+        strip_path: true
+        plugins:
+          - name: jwt
+            config:
+              key_claim_name: iss
+              claims_to_verify:
+                - exp

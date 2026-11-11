@@ -1,0 +1,167 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cs-app-secrets
+  namespace: conexao-solidaria
+type: Opaque
+stringData:
+  Jwt__Key: "CS#Solidaria@JwtKey2026!Hackaton11Nett"
+  ConnectionStrings__Identity: "Host=postgres;Port=5432;Database=cs_identity;Username=postgres;Password=postgres"
+  ConnectionStrings__Campaigns: "Host=postgres;Port=5432;Database=cs_campaigns;Username=postgres;Password=postgres"
+  MessageBusConfigs__Host: "amqp://admin:admin@rabbitmq:5672/"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cs-identity-api
+  namespace: conexao-solidaria
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cs-identity-api
+  template:
+    metadata:
+      labels:
+        app: cs-identity-api
+    spec:
+      containers:
+        - name: api
+          image: gabrielnatan2001/cs-identity-api:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: ConnectionStrings__DefaultConnection
+              valueFrom:
+                secretKeyRef:
+                  name: cs-app-secrets
+                  key: ConnectionStrings__Identity
+            - name: Jwt__Key
+              valueFrom:
+                secretKeyRef:
+                  name: cs-app-secrets
+                  key: Jwt__Key
+            - name: Jwt__Issuer
+              value: CS.Identity.API
+            - name: Jwt__Audience
+              value: CS.Campaigns.API
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cs-identity-api
+  namespace: conexao-solidaria
+spec:
+  selector:
+    app: cs-identity-api
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cs-campaigns-api
+  namespace: conexao-solidaria
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cs-campaigns-api
+  template:
+    metadata:
+      labels:
+        app: cs-campaigns-api
+    spec:
+      containers:
+        - name: api
+          image: gabrielnatan2001/cs-campaigns-api:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: ConnectionStrings__DefaultConnection
+              valueFrom:
+                secretKeyRef:
+                  name: cs-app-secrets
+                  key: ConnectionStrings__Campaigns
+            - name: MessageBusConfigs__Host
+              valueFrom:
+                secretKeyRef:
+                  name: cs-app-secrets
+                  key: MessageBusConfigs__Host
+            - name: Jwt__Key
+              valueFrom:
+                secretKeyRef:
+                  name: cs-app-secrets
+                  key: Jwt__Key
+            - name: Jwt__Issuer
+              value: CS.Identity.API
+            - name: Jwt__Audience
+              value: CS.Campaigns.API
+            - name: Publishers__DoacaoRecebida__Exchange
+              value: cs.doacao.recebida
+            - name: Publishers__DoacaoRecebida__RoutingKey
+              value: donations.doacao-recebida
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cs-campaigns-api
+  namespace: conexao-solidaria
+spec:
+  selector:
+    app: cs-campaigns-api
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cs-donations-worker
+  namespace: conexao-solidaria
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cs-donations-worker
+  template:
+    metadata:
+      labels:
+        app: cs-donations-worker
+    spec:
+      containers:
+        - name: worker
+          image: gabrielnatan2001/cs-donations-worker:latest
+          env:
+            - name: ConnectionStrings__DefaultConnection
+              valueFrom:
+                secretKeyRef:
+                  name: cs-app-secrets
+                  key: ConnectionStrings__Campaigns
+            - name: MessageBusConfigs__Host
+              valueFrom:
+                secretKeyRef:
+                  name: cs-app-secrets
+                  key: MessageBusConfigs__Host
+            - name: Workers__DoacaoRecebida__Ativo
+              value: "true"
+            - name: Workers__DoacaoRecebida__Exchange
+              value: cs.doacao.recebida
+            - name: Workers__DoacaoRecebida__RoutingKey
+              value: donations.doacao-recebida

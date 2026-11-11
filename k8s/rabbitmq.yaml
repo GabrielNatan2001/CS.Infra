@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rabbitmq-definitions
+  namespace: conexao-solidaria
+data:
+  definitions.json: |
+    {
+      "users": [{"name":"admin","password":"admin","tags":"administrator"}],
+      "vhosts":[{"name":"/"}],
+      "permissions":[{"user":"admin","vhost":"/","configure":".*","write":".*","read":".*"}],
+      "exchanges":[{"name":"cs.doacao.recebida-exchange","vhost":"/","type":"direct","durable":true,"auto_delete":false,"internal":false,"arguments":{}}],
+      "queues":[{"name":"donations.doacao-recebida-queue","vhost":"/","durable":true,"auto_delete":false,"arguments":{}}],
+      "bindings":[{"source":"cs.doacao.recebida-exchange","vhost":"/","destination":"donations.doacao-recebida-queue","destination_type":"queue","routing_key":"donations.doacao-recebida","arguments":{}}]
+    }
+  rabbitmq.conf: |
+    management.load_definitions = /etc/rabbitmq/definitions.json
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rabbitmq
+  namespace: conexao-solidaria
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:4-management
+          ports:
+            - containerPort: 5672
+            - containerPort: 15672
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              value: admin
+            - name: RABBITMQ_DEFAULT_PASS
+              value: admin
+          volumeMounts:
+            - name: cfg
+              mountPath: /etc/rabbitmq/definitions.json
+              subPath: definitions.json
+            - name: cfg
+              mountPath: /etc/rabbitmq/rabbitmq.conf
+              subPath: rabbitmq.conf
+      volumes:
+        - name: cfg
+          configMap:
+            name: rabbitmq-definitions
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: conexao-solidaria
+spec:
+  selector:
+    app: rabbitmq
+  ports:
+    - name: amqp
+      port: 5672
+      targetPort: 5672
+    - name: management
+      port: 15672
+      targetPort: 15672
+      nodePort: 31672
+  type: NodePort

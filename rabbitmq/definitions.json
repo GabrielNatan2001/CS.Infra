@@ -1,0 +1,25 @@
+{
+  "users": [
+    { "name": "admin", "password": "admin", "tags": "administrator" }
+  ],
+  "vhosts": [ { "name": "/" } ],
+  "permissions": [
+    { "user": "admin", "vhost": "/", "configure": ".*", "write": ".*", "read": ".*" }
+  ],
+  "exchanges": [
+    { "name": "cs.doacao.recebida-exchange", "vhost": "/", "type": "direct", "durable": true, "auto_delete": false, "internal": false, "arguments": {} }
+  ],
+  "queues": [
+    { "name": "donations.doacao-recebida-queue", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {} }
+  ],
+  "bindings": [
+    {
+      "source": "cs.doacao.recebida-exchange",
+      "vhost": "/",
+      "destination": "donations.doacao-recebida-queue",
+      "destination_type": "queue",
+      "routing_key": "donations.doacao-recebida",
+      "arguments": {}
+    }
+  ]
+}

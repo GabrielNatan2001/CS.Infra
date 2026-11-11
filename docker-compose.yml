@@ -1,0 +1,203 @@
+name: conexao-solidaria
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: cs-postgres
+    ports:
+      - "5435:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - cs-postgres-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    container_name: cs-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin
+    volumes:
+      - cs-rabbitmq-data:/var/lib/rabbitmq
+      - ./rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  identity-api:
+    image: gabrielnatan2001/cs-identity-api:latest
+    build:
+      context: ../CS.Identity
+    container_name: cs-identity-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=cs_identity;Username=postgres;Password=postgres
+      Jwt__Key: "CS#Solidaria@JwtKey2026!Hackaton11Nett"
+      Jwt__Issuer: CS.Identity.API
+      Jwt__Audience: CS.Campaigns.API
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  campaigns-api:
+    image: gabrielnatan2001/cs-campaigns-api:latest
+    build:
+      context: ../CS.Campaigns
+    container_name: cs-campaigns-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=cs_campaigns;Username=postgres;Password=postgres
+      MessageBusConfigs__Host: amqp://admin:admin@rabbitmq:5672/
+      MessageBusConfigs__RetryCount: "5"
+      Publishers__DoacaoRecebida__Exchange: cs.doacao.recebida
+      Publishers__DoacaoRecebida__RoutingKey: donations.doacao-recebida
+      Jwt__Key: "CS#Solidaria@JwtKey2026!Hackaton11Nett"
+      Jwt__Issuer: CS.Identity.API
+      Jwt__Audience: CS.Campaigns.API
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      identity-api:
+        condition: service_started
+    restart: unless-stopped
+
+  donations-worker:
+    image: gabrielnatan2001/cs-donations-worker:latest
+    build:
+      context: ../CS.Donations
+    container_name: cs-donations-worker
+    environment:
+      ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=cs_campaigns;Username=postgres;Password=postgres
+      MessageBusConfigs__Host: amqp://admin:admin@rabbitmq:5672/
+      MessageBusConfigs__RetryCount: "5"
+      Workers__DoacaoRecebida__Ativo: "true"
+      Workers__DoacaoRecebida__Exchange: cs.doacao.recebida
+      Workers__DoacaoRecebida__RoutingKey: donations.doacao-recebida
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      campaigns-api:
+        condition: service_started
+    restart: unless-stopped
+
+  kong:
+    image: kong:3.8
+    container_name: cs-kong
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /kong/kong.yml
+      KONG_PROXY_LISTEN: 0.0.0.0:8000
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+    volumes:
+      - ./kong/kong.yml:/kong/kong.yml:ro
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+    depends_on:
+      - identity-api
+      - campaigns-api
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: cs-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - identity-api
+      - campaigns-api
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: cs-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  zabbix-postgres:
+    image: postgres:16
+    container_name: cs-zabbix-postgres
+    environment:
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix
+      POSTGRES_DB: zabbix
+    volumes:
+      - cs-zabbix-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zabbix"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:alpine-7.0-latest
+    container_name: cs-zabbix-server
+    environment:
+      DB_SERVER_HOST: zabbix-postgres
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix
+      POSTGRES_DB: zabbix
+    depends_on:
+      zabbix-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0-latest
+    container_name: cs-zabbix-web
+    ports:
+      - "8088:8080"
+    environment:
+      ZBX_SERVER_HOST: zabbix-server
+      DB_SERVER_HOST: zabbix-postgres
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix
+      POSTGRES_DB: zabbix
+    depends_on:
+      - zabbix-server
+    restart: unless-stopped
+
+  zabbix-agent:
+    image: zabbix/zabbix-agent:alpine-7.0-latest
+    container_name: cs-zabbix-agent
+    environment:
+      ZBX_HOSTNAME: cs-docker-host
+      ZBX_SERVER_HOST: zabbix-server
+    depends_on:
+      - zabbix-server
+    restart: unless-stopped
+
+volumes:
+  cs-postgres-data:
+  cs-rabbitmq-data:
+  cs-zabbix-pg:
